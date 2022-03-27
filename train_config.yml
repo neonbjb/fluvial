@@ -1,0 +1,110 @@
+#### general settings
+name: train_unet_diffusion
+use_tb_logger: true
+model: extensibletrainer
+distortion: sr
+scale: 1
+gpu_ids: [0]
+start_step: -1
+checkpointing_enabled: true
+fp16: false
+wandb: true
+#force_start_step: 53499
+
+datasets:
+  train:
+    name: train_dataset
+    n_workers: 4
+    batch_size: 256
+    mode: imagefolder
+    rgb_n1_to_1: true
+    paths: <<insert_path_to_folder_filled_with_256x256_image_tiles>>
+    target_size: 256
+    scale: 2
+    fixed_corruptions: [ jpeg-broad, gaussian_blur ]
+    random_corruptions: [ none ]
+    num_corrupts_per_image: 1
+    corruption_blur_scale: 1
+    corrupt_before_downsize: false
+
+networks:
+  generator:
+    type: generator
+    which_model_G: unet_diffusion
+    args:
+      image_size: 256
+      in_channels: 3
+      num_corruptions: 2
+      model_channels: 192
+      out_channels: 6
+      num_res_blocks: 2
+      attention_resolutions: [8,16]
+      dropout: 0
+      channel_mult: [1,1,2,2,4,4]
+      num_heads: 4
+      num_heads_upsample: -1
+      use_scale_shift_norm: true
+
+#### path
+path:
+  strict_load: true
+  #resume_state: ../experiments/train_unet_diffusion/training_state/0.state
+
+steps:        
+  generator:
+    training: generator
+
+    optimizer: adamw
+    optimizer_params:
+      lr: !!float 3e-4
+      weight_decay: 0
+      beta1: 0.9
+      beta2: 0.9999
+
+    injectors:
+      diffusion:
+        type: gaussian_diffusion
+        in: hq
+        generator: generator
+        beta_schedule:
+          schedule_name: linear
+          num_diffusion_timesteps: 4000
+        diffusion_args:
+          model_mean_type: epsilon
+          model_var_type: learned_range
+          loss_type: mse
+        sampler_type: uniform
+        model_input_keys:
+          low_res: lq
+          corruption_factor: corruption_entropy
+        out: loss
+        out_key_vb_loss: vb_loss
+        out_key_x_start: x_start_pred
+    losses:
+      diffusion_loss:
+        type: direct
+        weight: 1
+        key: loss
+      var_loss:
+        type: direct
+        weight: 1
+        key: vb_loss
+
+train:
+  niter: 500000
+  warmup_iter: -1
+  mega_batch_factor: 32
+  ema_rate: .999
+  val_freq: 500
+
+  default_lr_scheme: MultiStepLR
+  gen_lr_steps: [ 50000, 100000, 150000 ]
+  lr_gamma: 0.5
+
+logger:
+  print_freq: 30
+  save_checkpoint_freq: 500
+  visuals: [x_start_pred, hq, lq]
+  visual_debug_rate: 500
+  reverse_n1_to_1: true
+  reverse_imagenet_norm: false
